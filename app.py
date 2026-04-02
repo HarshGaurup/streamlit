@@ -148,17 +148,23 @@ def main() -> None:
     st.title("Meeting bot setup")
 
     api_bearer = _secret_or_env("PROSHORT_API_BEARER_TOKEN")
-    default_base = _secret_or_env("PROSHORT_MEETING_JOIN_BASE_URL")
+    backend_from_secrets = _secret_or_env("PROSHORT_MEETING_JOIN_BASE_URL")
 
     with st.sidebar:
         st.subheader("Backend")
-        api_base = st.text_input(
-            "Backend base URL",
-            value=default_base,
-            placeholder="https://your-api.example.com/enterprise-api-down",
-            help="Base URL for avatar/deals API (no trailing path). "
-            "Set PROSHORT_MEETING_JOIN_BASE_URL in .streamlit/secrets.toml or Cloud Secrets.",
+        if backend_from_secrets:
+            st.caption("Backend base URL is loaded from secrets (hidden from the UI).")
+        backend_override = st.text_input(
+            "Backend base URL override",
+            value="",
+            placeholder=(
+                "Leave empty to use secrets"
+                if backend_from_secrets
+                else "https://…/enterprise-api-down (required if unset in secrets)"
+            ),
+            help="Optional override. If empty, PROSHORT_MEETING_JOIN_BASE_URL from secrets or env is used.",
         )
+        api_base = (backend_override.strip() or backend_from_secrets).strip()
         if not api_bearer:
             st.error(
                 "Missing **PROSHORT_API_BEARER_TOKEN**. "
