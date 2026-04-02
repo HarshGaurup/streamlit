@@ -1,8 +1,13 @@
 """
 Streamlit UI: meeting URL, bot name, deal picker (CRM), and meeting join POST.
-- Deals and join: fixed Bearer token in code (no token field in UI).
-- Join URL: PROSHORT_MEETING_JOIN_BASE_URL (default staging internal host).
-- Join body matches MeetingRequest: meeting_url, bot_name, deal_id, avatar_id, voice_id.
+
+Secrets (local): `.streamlit/secrets.toml` — copy from `secrets.toml.example`.
+Secrets (Cloud): App settings → Secrets (same keys as below).
+
+Env vars (optional, e.g. `.env` / `local.env`): same names, loaded via python-dotenv.
+Never commit real secrets; `secrets.toml` and `local.env` are gitignored.
+
+Keys: PROSHORT_API_BEARER_TOKEN, PROSHORT_MEETING_JOIN_BASE_URL (optional default URL).
 """
 
 from __future__ import annotations
@@ -15,14 +20,26 @@ import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
+load_dotenv("local.env", override=False)
 
 DEFAULT_BOT_NAME = "Proshort AI Assistant"
-API_BEARER_TOKEN = "ps_rocks_letmein"
 DEFAULT_AVATAR_ID = "30fa96d0-26c4-4e55-94a0-517025942e18"  # Cara
 DEFAULT_VOICE_ID = "6bfbe25a-979d-40f3-a92b-5394170af54b"
 DEALS_PATH = "/avatar/deals"
 MEETING_JOIN_PATH = "/avatar/meeting/join"
-DEFAULT_MEETING_JOIN_BASE = "https://api-services-staging-apps.internal.proshort.ai/enterprise-api-down"
+
+
+def _secret_or_env(key: str, default: str = "") -> str:
+    """Prefer env (incl. dotenv), then Streamlit secrets (local file or Cloud)."""
+    v = os.getenv(key)
+    if v is not None and str(v).strip():
+        return str(v).strip()
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key]).strip()
+    except (FileNotFoundError, RuntimeError, KeyError, TypeError):
+        pass
+    return default
 
 
 def _raw_jwt(credential: str) -> str:
@@ -88,6 +105,7 @@ def join_meeting(
     deal_id: str,
     avatar_id: str,
     voice_id: str,
+    bearer_token: str,
 ) -> tuple[Any | None, int | None, str | None]:
     """POST avatar meeting/join (MeetingRequest). Returns (body, status, error)."""
     url = f"{join_base_url.rstrip('/')}{MEETING_JOIN_PATH}"
@@ -102,7 +120,7 @@ def join_meeting(
     headers = {
         "Content-Type": "application/json",
         "accept": "application/json",
-        "Authorization": API_BEARER_TOKEN,
+        "Authorization": bearer_token,
     }
     try:
         r = requests.post(url, json=payload, headers=headers, timeout=60)
@@ -129,16 +147,26 @@ def main() -> None:
     st.set_page_config(page_title="Meeting bot setup", layout="centered")
     st.title("Meeting bot setup")
 
+    api_bearer = _secret_or_env("PROSHORT_API_BEARER_TOKEN")
+    default_base = _secret_or_env("PROSHORT_MEETING_JOIN_BASE_URL")
+
     with st.sidebar:
         st.subheader("Backend")
         api_base = st.text_input(
             "Backend base URL",
-            value=os.getenv(
-                "PROSHORT_MEETING_JOIN_BASE_URL",
-                DEFAULT_MEETING_JOIN_BASE,
-            ),
-            help="Host for enterprise avatar/deals API (no trailing path).",
+            value=default_base,
+            placeholder="https://your-api.example.com/enterprise-api-down",
+            help="Base URL for avatar/deals API (no trailing path). "
+            "Set PROSHORT_MEETING_JOIN_BASE_URL in .streamlit/secrets.toml or Cloud Secrets.",
         )
+        if not api_bearer:
+            st.error(
+                "Missing **PROSHORT_API_BEARER_TOKEN**. "
+                "Locally: add to `.streamlit/secrets.toml`. "
+                "Cloud: App → Settings → Secrets."
+            )
+        elif not (api_base or "").strip():
+            st.warning("Set backend base URL (or PROSHORT_MEETING_JOIN_BASE_URL in secrets).")
 
     meeting_url = st.text_input("Meeting URL", placeholder="https://...")
     bot_name = st.text_input("Bot name", value=DEFAULT_BOT_NAME)
@@ -181,7 +209,12 @@ def main() -> None:
         st.session_state.deals_error = None
 
     if load_clicked:
-        deals, err = fetch_deals(api_base, API_BEARER_TOKEN, deal_search, int(deal_limit))
+        if not api_bearer:
+            deals, err = [], "Set PROSHORT_API_BEARER_TOKEN in secrets or environment."
+        elif not (api_base or "").strip():
+            deals, err = [], "Enter a backend base URL."
+        else:
+            deals, err = fetch_deals(api_base, api_bearer, deal_search, int(deal_limit))
         st.session_state.deals_cache = deals
         st.session_state.deals_error = err
 
@@ -240,28 +273,34 @@ def main() -> None:
         )
 
     if join_clicked:
-        body, status, err = join_meeting(
-            api_base,
-            meeting_url.strip(),
-            name_for_join,
-            deal_id_final,
-            avatar_for_join,
-            voice_for_join,
-        )
-        if err:
-            st.error(err)
-            if body is not None:
-                if isinstance(body, (dict, list)):
-                    st.json(body)
-                else:
-                    st.code(str(body))
+        if not api_bearer:
+            st.error("Set PROSHORT_API_BEARER_TOKEN before joining.")
+        elif not (api_base or "").strip():
+            st.error("Enter a backend base URL before joining.")
         else:
-            st.success(f"Meeting join request accepted (HTTP {status}).")
-            if body is not None:
-                if isinstance(body, (dict, list)):
-                    st.json(body)
-                else:
-                    st.code(str(body))
+            body, status, err = join_meeting(
+                api_base,
+                meeting_url.strip(),
+                name_for_join,
+                deal_id_final,
+                avatar_for_join,
+                voice_for_join,
+                api_bearer,
+            )
+            if err:
+                st.error(err)
+                if body is not None:
+                    if isinstance(body, (dict, list)):
+                        st.json(body)
+                    else:
+                        st.code(str(body))
+            else:
+                st.success(f"Meeting join request accepted (HTTP {status}).")
+                if body is not None:
+                    if isinstance(body, (dict, list)):
+                        st.json(body)
+                    else:
+                        st.code(str(body))
 
 
 if __name__ == "__main__":
