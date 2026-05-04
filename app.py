@@ -106,10 +106,11 @@ def join_meeting(
     avatar_id: str,
     voice_id: str,
     bearer_token: str,
+    metrics: bool = False,
 ) -> tuple[Any | None, int | None, str | None]:
     """POST avatar meeting/join (MeetingRequest). Returns (body, status, error)."""
     url = f"{join_base_url.rstrip('/')}{MEETING_JOIN_PATH}"
-    payload = {
+    payload: dict[str, Any] = {
         "meeting_url": meeting_url.strip(),
         "bot_name": bot_name.strip() or DEFAULT_BOT_NAME,
         "deal_id": deal_id.strip(),
@@ -117,6 +118,8 @@ def join_meeting(
         "avatar_id": (avatar_id.strip() or DEFAULT_AVATAR_ID),
         "voice_id": (voice_id.strip() or DEFAULT_VOICE_ID),
     }
+    if metrics:
+        payload["metrics"] = True
     headers = {
         "Content-Type": "application/json",
         "accept": "application/json",
@@ -193,6 +196,15 @@ def main() -> None:
         )
     avatar_for_join = (avatar_id_input or "").strip() or DEFAULT_AVATAR_ID
     voice_for_join = (voice_id_input or "").strip() or DEFAULT_VOICE_ID
+
+    ui_mode = st.radio(
+        "UI mode",
+        options=["Normal", "Metrics"],
+        index=0,
+        horizontal=True,
+        help="Metrics UI sends `metrics: true` in the meeting/join payload.",
+    )
+    use_metrics = ui_mode == "Metrics"
 
     st.subheader("Deal")
     col_a, col_b, col_c = st.columns([2, 1, 1])
@@ -275,6 +287,7 @@ def main() -> None:
                 "deal_id": deal_id_final or None,
                 "avatar_id": avatar_for_join,
                 "voice_id": voice_for_join,
+                **({"metrics": True} if use_metrics else {}),
             }
         )
 
@@ -292,6 +305,7 @@ def main() -> None:
                 avatar_for_join,
                 voice_for_join,
                 api_bearer,
+                metrics=use_metrics,
             )
             if err:
                 st.error(err)
