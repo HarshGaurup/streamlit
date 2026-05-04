@@ -109,24 +109,31 @@ def join_meeting(
     metrics: bool = False,
 ) -> tuple[Any | None, int | None, str | None]:
     """POST avatar meeting/join (MeetingRequest). Returns (body, status, error)."""
-    url = f"{join_base_url.rstrip('/')}{MEETING_JOIN_PATH}"
-    payload: dict[str, Any] = {
-        "meeting_url": meeting_url.strip(),
-        "bot_name": bot_name.strip() or DEFAULT_BOT_NAME,
-        "deal_id": deal_id.strip(),
-        "customer_id": "yddizafz",
-        "avatar_id": (avatar_id.strip() or DEFAULT_AVATAR_ID),
-        "voice_id": (voice_id.strip() or DEFAULT_VOICE_ID),
-    }
+    endpoint = f"{join_base_url.rstrip('/')}{MEETING_JOIN_PATH}"
     if metrics:
-        payload["metrics"] = True
+        payload: dict[str, Any] = {
+            "deal_id": deal_id.strip(),
+            "customer_id": "yddizafz",
+            "avatar_id": (avatar_id.strip() or DEFAULT_AVATAR_ID),
+            "voice_id": (voice_id.strip() or DEFAULT_VOICE_ID),
+            "metrics": True,
+        }
+    else:
+        payload = {
+            "meeting_url": meeting_url.strip(),
+            "bot_name": bot_name.strip() or DEFAULT_BOT_NAME,
+            "deal_id": deal_id.strip(),
+            "customer_id": "yddizafz",
+            "avatar_id": (avatar_id.strip() or DEFAULT_AVATAR_ID),
+            "voice_id": (voice_id.strip() or DEFAULT_VOICE_ID),
+        }
     headers = {
         "Content-Type": "application/json",
         "accept": "application/json",
         "Authorization": bearer_token,
     }
     try:
-        r = requests.post(url, json=payload, headers=headers, timeout=60)
+        r = requests.post(endpoint, json=payload, headers=headers, timeout=60)
     except requests.RequestException as e:
         return None, None, str(e)
     ct = (r.headers.get("content-type") or "").lower()
@@ -177,8 +184,26 @@ def main() -> None:
         elif not (api_base or "").strip():
             st.warning("Set backend base URL (or PROSHORT_MEETING_JOIN_BASE_URL in secrets).")
 
-    meeting_url = st.text_input("Meeting URL", placeholder="https://...")
-    bot_name = st.text_input("Bot name", value=DEFAULT_BOT_NAME)
+    ui_mode = st.radio(
+        "Join mode",
+        options=["Normal", "Metrics"],
+        index=0,
+        horizontal=True,
+        help="Metrics: `metrics: true` payload without meeting URL or bot name.",
+    )
+    use_metrics = ui_mode == "Metrics"
+
+    meeting_url = ""
+    bot_name = ""
+    if use_metrics:
+        st.caption("Metrics mode: only deal (and avatar/voice below) are sent to join.")
+    else:
+        meeting_url = st.text_input(
+            "Meeting URL",
+            placeholder="https://...",
+            help="Required for Normal mode.",
+        )
+        bot_name = st.text_input("Bot name", value=DEFAULT_BOT_NAME)
 
     st.subheader("Avatar & voice (optional)")
     col_av, col_vo = st.columns(2)
@@ -196,15 +221,6 @@ def main() -> None:
         )
     avatar_for_join = (avatar_id_input or "").strip() or DEFAULT_AVATAR_ID
     voice_for_join = (voice_id_input or "").strip() or DEFAULT_VOICE_ID
-
-    ui_mode = st.radio(
-        "UI mode",
-        options=["Normal", "Metrics"],
-        index=0,
-        horizontal=True,
-        help="Metrics UI sends `metrics: true` in the meeting/join payload.",
-    )
-    use_metrics = ui_mode == "Metrics"
 
     st.subheader("Deal")
     col_a, col_b, col_c = st.columns([2, 1, 1])
@@ -265,31 +281,38 @@ def main() -> None:
     deal_id_final = (deal_id_selected or "").strip()
 
     st.divider()
-    join_ready = bool(meeting_url.strip()) and bool(deal_id_final)
-    name_for_join = (bot_name or "").strip() or DEFAULT_BOT_NAME
+    meeting_ok = use_metrics or bool(meeting_url.strip())
+    join_ready = bool(deal_id_final) and meeting_ok
+    name_for_join = ((bot_name or "").strip() or DEFAULT_BOT_NAME) if not use_metrics else ""
 
     col_j1, col_j2 = st.columns(2)
     with col_j1:
+        join_help = (
+            "Requires a deal from Load deals (no meeting URL or bot name in Metrics)."
+            if use_metrics
+            else "Requires meeting URL and a deal from Load deals."
+        )
         join_clicked = st.button(
             "Join meeting",
             type="primary",
             disabled=not join_ready,
-            help="Requires meeting URL and a deal selected from Load deals.",
+            help=join_help,
         )
     with col_j2:
         review_clicked = st.button("Review selection")
 
     if review_clicked:
-        st.json(
-            {
-                "meeting_url": meeting_url.strip() or None,
-                "bot_name": name_for_join,
-                "deal_id": deal_id_final or None,
-                "avatar_id": avatar_for_join,
-                "voice_id": voice_for_join,
-                **({"metrics": True} if use_metrics else {}),
-            }
-        )
+        preview: dict[str, Any] = {
+            "deal_id": deal_id_final or None,
+            "avatar_id": avatar_for_join,
+            "voice_id": voice_for_join,
+        }
+        if use_metrics:
+            preview["metrics"] = True
+        else:
+            preview["meeting_url"] = meeting_url.strip() or None
+            preview["bot_name"] = name_for_join or DEFAULT_BOT_NAME
+        st.json(preview)
 
     if join_clicked:
         if not api_bearer:
